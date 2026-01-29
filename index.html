@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Каузометрия — субъективная временная ось</title>
+<style>
+body { font-family: Arial, sans-serif; margin:20px; display:grid; grid-template-columns:380px 1fr; gap:20px; }
+h1,h2 { margin:0 0 10px; }
+.panel { border:1px solid #ccc; padding:12px; border-radius:6px; }
+input,select,button { width:100%; margin-bottom:8px; padding:6px; }
+svg { border:1px solid #ddd; background:#fafafa; }
+.hint { font-size:12px; color:#555; }
+.modal { display:none; position:fixed; inset:0; background: rgba(0,0,0,0.5); justify-content:center; align-items:center; }
+.modal-content { background:white; padding:20px; border-radius:6px; width:300px; }
+</style>
+</head>
+<body>
+
+<div class="panel">
+<h1>Каузометрия</h1>
+
+<h2>Респондент</h2>
+<input id="respName" placeholder="Имя респондента">
+<input id="respDate" placeholder="Дата составления">
+
+<h2>Управление</h2>
+<button onclick="showEventModal()">Добавить событие</button>
+<button onclick="showDeleteEventModal()">Удалить событие</button>
+<button onclick="showLinkModal()">Добавить связь</button>
+<button onclick="showDeleteLinkModal()">Удалить связь</button>
+<button onclick="exportPNG()">Экспорт PNG</button>
+
+<h2>JSON респондента</h2>
+<button onclick="saveJSON()">Сохранить JSON</button>
+<input type="file" accept="application/json" onchange="loadJSON(event)">
+<p class="hint">Ось X — равномерно по событиям, подписи годов под событиями, ось Y — значимость (-2…+2)</p>
+</div>
+
+<div class="panel">
+<h2>Визуализация жизненного пути</h2>
+<svg id="viz" width="100%" height="520"></svg>
+</div>
+
+<!-- Модальные окна -->
+<div id="eventModal" class="modal">
+<div class="modal-content">
+<h3>Добавить событие</h3>
+<input id="modalEventDesc" placeholder="Описание события">
+<input id="modalEventDate" placeholder="Дата (дд.мм.гггг / мм.гггг / гггг)">
+<label>Значимость (-2…+2)</label>
+<select id="modalEventValence">
+<option value="-2">-2</option>
+<option value="-1">-1</option>
+<option value="0">0</option>
+<option value="1">+1</option>
+<option value="2">+2</option>
+</select>
+<label>Этап</label>
+<select id="modalEventStage">
+<option value="before">До терапии</option>
+<option value="after">После терапии</option>
+</select>
+<label>Временная категория</label>
+<select id="modalEventTimeCategory">
+<option value="past">Прошлое</option>
+<option value="present">Настоящее</option>
+<option value="future">Будущее</option>
+</select>
+<button onclick="addEventFromModal()">Добавить</button>
+<button onclick="closeModal('eventModal')">Отмена</button>
+</div>
+</div>
+
+<div id="deleteEventModal" class="modal">
+<div class="modal-content">
+<h3>Удалить событие</h3>
+<select id="deleteEventSelect"></select>
+<button onclick="deleteEvent()">Удалить</button>
+<button onclick="closeModal('deleteEventModal')">Отмена</button>
+</div>
+</div>
+
+<div id="linkModal" class="modal">
+<div class="modal-content">
+<h3>Добавить связь</h3>
+<label>Событие 1</label>
+<select id="linkSelectA"></select>
+<label>Событие 2</label>
+<select id="linkSelectB"></select>
+<label>Этап</label>
+<select id="linkStage">
+<option value="before">До терапии</option>
+<option value="after">После терапии</option>
+</select>
+<button onclick="addLinkFromModal()">Создать</button>
+<button onclick="closeModal('linkModal')">Отмена</button>
+</div>
+</div>
+
+<div id="deleteLinkModal" class="modal">
+<div class="modal-content">
+<h3>Удалить связь</h3>
+<label>Событие 1</label>
+<select id="delLinkSelectA"></select>
+<label>Событие 2</label>
+<select id="delLinkSelectB"></select>
+<button onclick="deleteLinkFromModal()">Удалить</button>
+<button onclick="closeModal('deleteLinkModal')">Отмена</button>
+</div>
+</div>
+
+<script>
+let respondent={name:"",date:"",events:[],links:[]};
+
+// --- Уникальный генератор ID ---
+function generateEventId(){
+  let maxNum = 0;
+  respondent.events.forEach(e=>{
+    const n=parseInt(e.id.slice(1));
+    if(!isNaN(n) && n>maxNum) maxNum=n;
+  });
+  return "E"+(maxNum+1);
+}
+
+// --- Модальные ---
+function showEventModal(){document.getElementById('eventModal').style.display='flex';}
+function showDeleteEventModal(){
+  const sel=document.getElementById('deleteEventSelect'); sel.innerHTML='';
+  respondent.events.forEach(e=>{ const opt=document.createElement('option'); opt.value=e.id; opt.text=e.id+': '+e.description; sel.add(opt); });
+  document.getElementById('deleteEventModal').style.display='flex';
+}
+function showLinkModal(){
+  if(respondent.events.length<2){alert("Добавьте хотя бы 2 события"); return;}
+  const selA=document.getElementById('linkSelectA'); const selB=document.getElementById('linkSelectB'); selA.innerHTML=''; selB.innerHTML='';
+  respondent.events.forEach(e=>{
+    const opt1=document.createElement('option'); opt1.value=e.id; opt1.text=e.id+': '+e.description; selA.add(opt1);
+    const opt2=document.createElement('option'); opt2.value=e.id; opt2.text=e.id+': '+e.description; selB.add(opt2);
+  });
+  document.getElementById('linkModal').style.display='flex';
+}
+function showDeleteLinkModal(){
+  if(respondent.links.length===0){alert("Нет связей для удаления"); return;}
+  const selA=document.getElementById('delLinkSelectA'); const selB=document.getElementById('delLinkSelectB'); selA.innerHTML=''; selB.innerHTML='';
+  respondent.links.forEach(l=>{
+    const e1=respondent.events.find(e=>e.id===l.from);
+    const e2=respondent.events.find(e=>e.id===l.to);
+    if(e1&&e2){
+      const opt1=document.createElement('option'); opt1.value=l.from; opt1.text=e1.id+': '+e1.description; selA.add(opt1);
+      const opt2=document.createElement('option'); opt2.value=l.to; opt2.text=e2.id+': '+e2.description; selB.add(opt2);
+    }
+  });
+  document.getElementById('deleteLinkModal').style.display='flex';
+}
+function closeModal(id){document.getElementById(id).style.display='none';}
+
+// --- События ---
+function parseDateWeight(str){
+  if(!str) return 0;
+  const parts=str.split('.');
+  let day=0, month=0, year=0;
+  if(parts.length===3){ day=parseInt(parts[0])-1; month=parseInt(parts[1])-1; year=parseInt(parts[2]); }
+  else if(parts.length===2){ month=parseInt(parts[0])-1; year=parseInt(parts[1]); }
+  else { year=parseInt(parts[0]); }
+  return year + month/12 + day/365;
+}
+function addEventFromModal(){
+  const desc=document.getElementById('modalEventDesc').value;
+  const date=document.getElementById('modalEventDate').value;
+  const valence=parseInt(document.getElementById('modalEventValence').value);
+  const stage=document.getElementById('modalEventStage').value;
+  const timeCat=document.getElementById('modalEventTimeCategory').value;
+  if(!desc||!date){alert("Введите данные"); return;}
+  const id=generateEventId();
+  respondent.events.push({id,description:desc,date,sortKey:parseDateWeight(date),valence,stage,timeCategory:timeCat});
+  document.getElementById('modalEventDesc').value=''; document.getElementById('modalEventDate').value='';
+  closeModal('eventModal'); render();
+}
+function deleteEvent(){
+  const sel=document.getElementById('deleteEventSelect'); const id=sel.value;
+  // Удаляем событие
+  respondent.events=respondent.events.filter(e=>e.id!==id);
+  // Удаляем все связи с ним
+  respondent.links=respondent.links.filter(l=>l.from!==id && l.to!==id);
+  closeModal('deleteEventModal'); render();
+}
+
+// --- Связи ---
+function addLinkFromModal(){
+  const from=document.getElementById('linkSelectA').value;
+  const to=document.getElementById('linkSelectB').value;
+  const stage=document.getElementById('linkStage').value;
+  if(from===to){alert("Выберите разные события"); return;}
+  if(respondent.links.find(l=>(l.from===from && l.to===to)||(l.from===to && l.to===from))){alert("Связь уже существует"); return;}
+  respondent.links.push({from,to,stage}); closeModal('linkModal'); render();
+}
+function deleteLinkFromModal(){
+  const from=document.getElementById('delLinkSelectA').value;
+  const to=document.getElementById('delLinkSelectB').value;
+  respondent.links=respondent.links.filter(l=>!( (l.from===from && l.to===to)||(l.from===to && l.to===from) ));
+  closeModal('deleteLinkModal'); render();
+}
+
+// --- Рендер ---
+function render(){
+  const svg=document.getElementById('viz'); svg.innerHTML='';
+  if(respondent.events.length===0) return;
+  const padding=80, width=svg.clientWidth-padding*2, height=svg.clientHeight-padding*2;
+  const events=[...respondent.events].sort((a,b)=>a.sortKey-b.sortKey);
+  // равномерное X
+  events.forEach((e,i)=>{ e.xPos = padding + (i / Math.max(1, events.length-1)) * width; });
+  const yScale=v=> padding+((2-v)/4)*height;
+
+  // ось Y
+  [-2,-1,0,1,2].forEach(v=>{
+    const t=document.createElementNS('http://www.w3.org/2000/svg','text');
+    t.setAttribute('x',30); t.setAttribute('y',yScale(v)+4); t.textContent=v; t.setAttribute('font-size','12'); svg.appendChild(t);
+  });
+
+  // подписи годов
+  const yearSet = new Set(events.map(e=>Math.floor(e.sortKey)));
+  const years = [...yearSet].sort((a,b)=>a-b);
+  years.forEach(y=>{
+    const event = events.find(e=>Math.floor(e.sortKey)===y);
+    if(event){
+      const x = event.xPos;
+      const t=document.createElementNS('http://www.w3.org/2000/svg','text');
+      t.setAttribute('x',x); t.setAttribute('y',height+padding+15);
+      t.setAttribute('font-size','12'); t.setAttribute('text-anchor','middle'); t.textContent=y;
+      svg.appendChild(t);
+    }
+  });
+
+  // связи
+  respondent.links.forEach(l=>{
+    const a=events.find(e=>e.id===l.from);
+    const b=events.find(e=>e.id===l.to);
+    if(!a||!b) return;
+    const x1=a.xPos, y1=yScale(a.valence), x2=b.xPos, y2=yScale(b.valence);
+    const dx=Math.abs(x2-x1);
+    const curve=Math.min(40, dx/2);
+    const direction=(Math.random()<0.5?-1:1);
+    const midY=(y1+y2)/2 - direction*curve;
+    const path=document.createElementNS('http://www.w3.org/2000/svg','path');
+    path.setAttribute('d',`M ${x1} ${y1} Q ${(x1+x2)/2} ${midY} ${x2} ${y2}`);
+    path.setAttribute('fill','none'); path.setAttribute('stroke',l.stage==='before'?'#2563eb':'#ea580c'); path.setAttribute('stroke-width','2');
+    svg.appendChild(path);
+  });
+
+  // события + подписи с чередованием
+  const yOffsetMap={};
+  events.forEach(e=>{
+    const x=e.xPos, y=yScale(e.valence);
+    const c=document.createElementNS('http://www.w3.org/2000/svg','circle');
+    c.setAttribute('cx',x); c.setAttribute('cy',y); c.setAttribute('r',6);
+    c.setAttribute('fill',e.stage==='before'?'#3b82f6':'#f97316'); svg.appendChild(c);
+
+    const key=e.valence;
+    if(!yOffsetMap[key]) yOffsetMap[key]=true; else yOffsetMap[key]=!yOffsetMap[key];
+    const offset = yOffsetMap[key]? -12 : 12;
+    const label=document.createElementNS('http://www.w3.org/2000/svg','text');
+    label.setAttribute('x',x+8); label.setAttribute('y',y+offset); label.setAttribute('font-size','11');
+    label.textContent=`${e.id}: ${e.description}`; svg.appendChild(label);
+  });
+}
+
+// --- JSON ---
+function saveJSON(){
+  respondent.name=respName.value||"respondent"; respondent.date=respDate.value;
+  const filename=respondent.name.replace(/\s+/g,'_')+"_causogram.json";
+  const blob=new Blob([JSON.stringify(respondent,null,2)],{type:'application/json'});
+  const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=filename; a.click();
+}
+function loadJSON(e){
+  const file=e.target.files[0]; if(!file) return;
+  const reader=new FileReader();
+  reader.onload=()=>{ respondent=JSON.parse(reader.result); respName.value=respondent.name||''; respDate.value=respondent.date||''; render(); };
+  reader.readAsText(file);
+}
+
+// --- PNG ---
+function exportPNG(){
+  const svg=document.getElementById('viz');
+  const serializer=new XMLSerializer();
+  const source='<?xml version="1.0" standalone="no"?>\r\n'+serializer.serializeToString(svg);
+  const img=new Image();
+  const svgBlob=new Blob([source], {type:'image/svg+xml;charset=utf-8'});
+  const url=URL.createObjectURL(svgBlob);
+  img.onload=function(){
+    const canvas=document.createElement('canvas');
+    canvas.width=svg.clientWidth; canvas.height=svg.clientHeight;
+    const ctx=canvas.getContext('2d'); ctx.fillStyle="#fff"; ctx.fillRect(0,0,canvas.width,canvas.height);
+    ctx.drawImage(img,0,0,canvas.width,canvas.height);
+    const filename=(respName.value||"respondent").replace(/\s+/g,'_')+"_causogram.png";
+    const a=document.createElement('a'); a.href=canvas.toDataURL('image/png'); a.download=filename; a.click();
+    URL.revokeObjectURL(url);
+  };
+  img.src=url;
+}
+</script>
+
+</body>
+</html>
